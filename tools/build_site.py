@@ -27,7 +27,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SITE_SRC = Path(__file__).resolve().parent / "site"
 ASSETS = "arcade-assets"  # the home screen's own files; can't be used as a game name
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-THUMBS = ("thumb.png", "thumb.jpg", "thumb.jpeg", "thumb.webp", "thumb.gif")
+# Cabinet images picked up automatically, in priority order: cover.* first, then the older thumb.* names.
+COVERS = tuple(f"{stem}.{ext}" for stem in ("cover", "thumb") for ext in ("jpg", "jpeg", "webp", "png", "gif"))
+MENU_MUSIC = "main_menu.opus"  # tools/site/music/main_menu.opus -> played on the home screen when Sound is on
 HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 NOT_GAMES = {"tools", "games", ASSETS, "node_modules"}  # top-level folders never treated as games
 
@@ -99,11 +101,26 @@ def load_game(slug, folder):
         warn(f"{slug}/game.json: 'accent' should look like #ff2e97; using an automatic colour")
 
     thumb = None  # path relative to the game folder (it is published along with the game)
-    wanted = ([raw["thumbnail"]] if isinstance(raw.get("thumbnail"), str) else []) + list(THUMBS)
+    wanted = ([raw["thumbnail"]] if isinstance(raw.get("thumbnail"), str) else []) + list(COVERS)
     for name in wanted:
         if (folder / name).is_file():
             thumb = name.replace("\\", "/").lstrip("/")
             break
+
+    # Optional: where this game keeps its best score in localStorage (see README, "High scores").
+    hs, hiscore = raw.get("highscore"), None
+    if isinstance(hs, str) and hs.strip():
+        hs = {"key": hs.strip()}
+    if isinstance(hs, dict) and isinstance(hs.get("key"), str) and hs["key"].strip():
+        digits = hs.get("digits", 6)
+        hiscore = {
+            "key": hs["key"].strip(),
+            "field": hs["field"].strip() if isinstance(hs.get("field"), str) else "",
+            "label": hs["label"].strip() if isinstance(hs.get("label"), str) and hs["label"].strip() else "Hi-score",
+            "digits": max(0, min(12, digits)) if isinstance(digits, int) and not isinstance(digits, bool) else 6,
+        }
+    elif hs is not None:
+        warn(f"{slug}/game.json: 'highscore' should be a localStorage key, or an object with a \"key\"; ignoring it")
 
     requires = raw.get("requires", [])
     order = raw.get("order", 100)
@@ -120,6 +137,7 @@ def load_game(slug, folder):
         "order": order if isinstance(order, (int, float)) else 100,
         "hidden": raw.get("hidden") is True,
         "thumb": thumb,
+        "hiscore": hiscore,
     }
 
 
@@ -132,11 +150,19 @@ def render_card(game):
     else:
         art = '<div class="art-gen" aria-hidden="true"><i class="sun"></i><i class="floor"></i></div>'
     tags = "".join(f"<li>{e(t)}</li>" for t in (game["genre"], game["players"], game["controls"]) if t)
+    hs = game["hiscore"]
+    hi_attrs = f' data-slug="{e(game["slug"])}"'
+    if hs:
+        hi_attrs += f' data-hi-key="{e(hs["key"])}" data-hi-digits="{hs["digits"]}"'
+        if hs["field"]:
+            hi_attrs += f' data-hi-field="{e(hs["field"])}"'
+    hi_label = e(hs["label"]) if hs else "Hi-score"
+    hi = f'<p class="hi" hidden><span class="hi-label">{hi_label}</span><b class="hi-val"></b></p>'
     tagline = f'<p class="tagline">{e(game["tagline"])}</p>' if game["tagline"] else ""
     desc = f'<p class="desc">{e(game["description"])}</p>' if game["description"] else ""
     return f"""
       <li class="slot">
-        <a class="cab" href="{game["slug"]}/" style="--accent:{game["accent"]}" data-requires="{e(" ".join(game["requires"]))}">
+        <a class="cab" href="{game["slug"]}/" style="--accent:{game["accent"]}" data-requires="{e(" ".join(game["requires"]))}"{hi_attrs}>
           <div class="frame"><div class="cab-in">
             <div class="marquee"><span class="marquee-title">{e(game["title"])}</span></div>
             <div class="bezel"><div class="screen">{art}<span class="glass" aria-hidden="true"></span></div></div>
@@ -144,6 +170,7 @@ def render_card(game):
               {tagline}{desc}
               <ul class="tags">{tags}</ul>
               <p class="warn">This game needs WebGPU, which this browser doesn’t report. Try a recent Chrome or Edge.</p>
+              {hi}
               <div class="start"><i class="btn" aria-hidden="true"></i><span class="start-label">1P start</span></div>
             </div>
           </div></div>
@@ -170,12 +197,21 @@ def build(out: Path):
 
     shutil.copytree(SITE_SRC / "fonts", out / ASSETS / "fonts")
 
+    music = ""
+    if (SITE_SRC / "music" / MENU_MUSIC).is_file():
+        shutil.copytree(SITE_SRC / "music", out / ASSETS / "music")
+        music = f"{ASSETS}/music/{MENU_MUSIC}"
+        print(f"  music {music}")
+    else:
+        print(f"  music none (add tools/site/music/{MENU_MUSIC} for home screen music; see README)")
+
     repo = os.environ.get("GITHUB_REPOSITORY")
     sha = os.environ.get("GITHUB_SHA", "")[:7] or "local"
     page = (SITE_SRC / "index.template.html").read_text(encoding="utf-8")
     for token, value in {
         "{{CARDS}}": "".join(render_card(g) for g in listed) or EMPTY,
         "{{GAME_COUNT}}": f"{len(listed):02d}",
+        "{{MUSIC}}": html.escape(music),
         "{{BUILD_SHA}}": sha,
         "{{BUILD_DATE}}": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "{{SOURCE}}": (f' <a href="https://github.com/{html.escape(repo)}">Source on GitHub</a>.' if repo else ""),
