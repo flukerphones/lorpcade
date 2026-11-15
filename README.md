@@ -66,8 +66,9 @@ Without one, the game still appears, with a title made from the folder name and 
 ## High scores
 
 Every game is served from the same origin as the home screen, so they all share one `localStorage`, and the
-home screen can show a game's best score on its cabinet ("HI-SCORE 012300"). It appears once a score exists and
-updates by itself, including when the player comes back with the Back button or a score is saved in another tab.
+home screen can show a game's best score on its cabinet. The line beside the red button reads `HI 012300`. It reads
+`HI 000000` until a score exists and updates by itself, including when the player comes back with the Back button
+or a score is saved in another tab.
 Two ways to hook a game up:
 
 **1. The game already saves a score.** Name its key in `game.json`. Open the game, play once, then look in
@@ -79,7 +80,7 @@ DevTools > Application > Local Storage to find the key. No change to the game is
 
 A value can be a number (`12300`), text (`"2:31.4"`), or JSON. For JSON, say where the score is with `field`
 (`"stats.best"`); without it the page looks for `score`, `hiscore`, `highScore`, `high_score` or `best`.
-`label` changes the caption and `digits` sets the zero padding (default 6; `0` turns padding off).
+`label` replaces the `HI` caption and `digits` sets the zero padding (default 6; `0` turns padding off).
 
 **2. A new or changed game.** Save the score under `lorpcade:hiscore:<folder-name>`. No `game.json` entry is
 needed:

@@ -116,7 +116,7 @@ def load_game(slug, folder):
         hiscore = {
             "key": hs["key"].strip(),
             "field": hs["field"].strip() if isinstance(hs.get("field"), str) else "",
-            "label": hs["label"].strip() if isinstance(hs.get("label"), str) and hs["label"].strip() else "Hi-score",
+            "label": hs["label"].strip() if isinstance(hs.get("label"), str) and hs["label"].strip() else "HI",
             "digits": max(0, min(12, digits)) if isinstance(digits, int) and not isinstance(digits, bool) else 6,
         }
     elif hs is not None:
@@ -149,15 +149,16 @@ def render_card(game):
         art = f'<img class="art-img" src="{game["slug"]}/{e(game["thumb"])}" alt="" loading="lazy">'
     else:
         art = '<div class="art-gen" aria-hidden="true"><i class="sun"></i><i class="floor"></i></div>'
-    tags = "".join(f"<li>{e(t)}</li>" for t in (game["genre"], game["players"], game["controls"]) if t)
     hs = game["hiscore"]
     hi_attrs = f' data-slug="{e(game["slug"])}"'
     if hs:
         hi_attrs += f' data-hi-key="{e(hs["key"])}" data-hi-digits="{hs["digits"]}"'
         if hs["field"]:
             hi_attrs += f' data-hi-field="{e(hs["field"])}"'
-    hi_label = e(hs["label"]) if hs else "Hi-score"
-    hi = f'<p class="hi" hidden><span class="hi-label">{hi_label}</span><b class="hi-val"></b></p>'
+    # The start row of the cabinet reads "HI 012300" (the page script fills in the real score).
+    hi_label = e(hs["label"]) if hs else "HI"
+    hi_digits = hs["digits"] if hs else 6
+    tags = "".join(f"<li>{e(t)}</li>" for t in (game["genre"], game["players"], game["controls"]) if t)
     tagline = f'<p class="tagline">{e(game["tagline"])}</p>' if game["tagline"] else ""
     desc = f'<p class="desc">{e(game["description"])}</p>' if game["description"] else ""
     return f"""
@@ -170,8 +171,7 @@ def render_card(game):
               {tagline}{desc}
               <ul class="tags">{tags}</ul>
               <p class="warn">This game needs WebGPU, which this browser doesn’t report. Try a recent Chrome or Edge.</p>
-              {hi}
-              <div class="start"><i class="btn" aria-hidden="true"></i><span class="start-label">1P start</span></div>
+              <div class="start"><i class="btn" aria-hidden="true"></i><span class="start-label">{hi_label} <b class="hi-val">{"0" * hi_digits if hi_digits else "0"}</b></span></div>
             </div>
           </div></div>
         </a>
