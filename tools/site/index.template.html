@@ -43,7 +43,7 @@ body::before {
     radial-gradient(1px 1px at 270px 40px, #fff, transparent);
   background-size: 300px 220px;
 }
-/* CRT: scanlines + vignette over everything */
+/* CRT: scanlines + vignette over the page (the cabinets sit above it, so covers stay clean) */
 .crt {
   position: fixed; inset: 0; z-index: 50; pointer-events: none;
   background:
@@ -141,7 +141,7 @@ main { max-width: 1240px; margin: 0 auto; padding: clamp(20px, 4vh, 40px) clamp(
   list-style: none; margin: 0; padding: 0; display: grid; gap: 36px 32px; justify-content: center;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 360px));
 }
-.slot { display: flex; }
+.slot { display: flex; position: relative; z-index: 60; }   /* above .crt (50) */
 .empty { grid-column: 1 / -1; text-align: center; color: var(--dim); }
 
 /* ---------- cabinet ---------- */
@@ -165,30 +165,19 @@ main { max-width: 1240px; margin: 0 auto; padding: clamp(20px, 4vh, 40px) clamp(
 .frame { height: 100%; padding: 6px; background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 40%, var(--magenta))); }
 .cab-in { --c: 6px; height: 100%; display: flex; flex-direction: column; background: var(--void); }
 
-.marquee {
-  padding: 12px 14px; text-align: center; display: grid; place-items: center;
-  font: clamp(12px, 5.6cqi, 22px)/1.4 var(--display); min-height: calc(2.8em + 24px);
-  background: linear-gradient(180deg, #000, color-mix(in srgb, var(--accent) 22%, #000));
-  border-bottom: 4px solid var(--accent);
-}
-.marquee-title {
-  font: inherit; text-transform: uppercase; text-wrap: balance; color: #fff;
-  text-shadow: 0 0 4px #fff, 0 0 12px var(--accent), 0 0 28px var(--accent);
-}
-
 .bezel { padding: 14px 14px 10px; background: #05010f; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .screen {
-  position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 14px / 12px; background: #05010f;
+  position: relative; aspect-ratio: 1 / 1; overflow: hidden; border-radius: 14px / 12px; background: #05010f;
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .07), 0 0 0 3px #1a0b3d;
 }
 .screen .glass { position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
   background:
-    repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px),
     linear-gradient(135deg, rgba(255,255,255,.14), rgba(255,255,255,0) 32%),
     radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.65) 100%); }
 .art-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* generated screen for games without a thumb.png: sun over a grid, tinted by the game's colour */
+/* generated screen for games without a cover: sun over a grid, tinted by the game's colour */
 .art-gen { position: absolute; inset: 0;
   background: linear-gradient(180deg, #12053a 0%, color-mix(in srgb, var(--accent) 42%, #1b0850) 60%); }
 .art-gen i { position: absolute; display: block; }
@@ -209,31 +198,14 @@ main { max-width: 1240px; margin: 0 auto; padding: clamp(20px, 4vh, 40px) clamp(
 .cab:hover .art-gen .floor::before, .cab:focus-visible .art-gen .floor::before { animation: roll-card .9s linear infinite; }
 @keyframes roll-card { to { background-position: 0 20px, 0 0; } }
 
-.deck { flex: 1; display: flex; flex-direction: column; padding: 14px 16px 16px; background: linear-gradient(180deg, var(--panel), #170a3c); border-top: 4px solid var(--accent); }
-.tagline { margin: 0 0 4px; font-size: 26px; line-height: 1; color: var(--accent); text-transform: uppercase; text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
-.desc { margin: 0 0 12px; color: var(--ink); font-size: 23px; line-height: 1.1; }
-.tags { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-.tags li { font: 9px/1 var(--display); text-transform: uppercase; color: var(--dim); padding: 6px 7px; border: 2px solid color-mix(in srgb, var(--dim) 50%, transparent); }
-.warn { display: none; margin: 0 0 12px; color: #ff6f86; font-size: 22px; line-height: 1.1; }
-.cab.nogpu .warn { display: block; }
-
-.start { display: flex; align-items: center; gap: 14px; margin-top: auto; padding-top: 12px; border-top: 2px dashed rgba(180, 166, 220, .35); }
-.btn {
-  flex: none; width: 34px; height: 34px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 28%, #ffb3bf 0 10%, #ff2e4d 40%, #a3001b 100%);
-  box-shadow: 0 4px 0 #5a0010, 0 0 0 3px #1a0b3d, 0 0 0 5px #3b2a78;
-  transition: transform .06s steps(1), box-shadow .06s steps(1);
+/* the score line */
+.deck {
+  padding: 12px 14px 14px; text-align: center; text-transform: uppercase; color: var(--ink);
+  font: clamp(12px, 5.6cqi, 22px)/1.4 var(--display);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: linear-gradient(180deg, var(--panel), #170a3c); border-top: 4px solid var(--accent);
 }
-.cab:active .btn { transform: translateY(3px); box-shadow: 0 1px 0 #5a0010, 0 0 0 3px #1a0b3d, 0 0 0 5px #3b2a78; }
-.start-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/1 var(--display); text-transform: uppercase; color: var(--ink); }
-.start-label .hi-val { font-weight: 400; text-transform: none; color: var(--yellow); text-shadow: 0 0 8px rgba(255, 225, 77, .55); }
-/* a pixel cursor appears when the cabinet is selected */
-.start-label::before {
-  content: ""; display: inline-block; width: 10px; height: 14px; margin-right: 10px; vertical-align: -2px;
-  background: var(--yellow); clip-path: polygon(0 0, 100% 50%, 0 100%); visibility: hidden;
-}
-.cab:hover .start-label::before, .cab:focus-visible .start-label::before { visibility: visible; }
-.cab:hover .start-label, .cab:focus-visible .start-label { color: var(--yellow); animation: blink .9s steps(1) infinite; }
+.deck .hi-val { font-weight: 400; text-transform: none; color: var(--yellow); text-shadow: 0 0 8px rgba(255, 225, 77, .55); }
 
 /* ---------- footer ---------- */
 footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: center; color: var(--dim); font-size: 21px; }
@@ -274,11 +246,6 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
 (() => {
   const cards = [...document.querySelectorAll(".cab")];
 
-  // Flag games that need WebGPU when the browser doesn't report it.
-  if (!("gpu" in navigator)) {
-    cards.forEach(c => { if ((c.dataset.requires || "").split(" ").includes("webgpu")) c.classList.add("nogpu"); });
-  }
-
   // Sound is off by default and remembered per browser. When on it plays chiptune bleeps and, if the site was
   // built with tools/site/music/main_menu.opus, loops that as menu music.
   const btn = document.getElementById("snd");
@@ -298,7 +265,7 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
   // (older Safari) simply stay with the bleeps.
   const MUSIC_SRC = btn.dataset.music || "", MUSIC_VOL = 0.6;
   const canOpus = !!document.createElement("audio").canPlayType('audio/ogg; codecs="opus"');
-  let song, fader, armed = false;
+  let song, fader, armed = false, blocked = false;
   const ramp = (to, ms, done) => {
     clearInterval(fader);
     const from = song.volume, t0 = performance.now();
@@ -308,18 +275,17 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
       if (k === 1) { clearInterval(fader); if (done) done(); }
     }, 40);
   };
-  const waitForGesture = () => {                       // autoplay was blocked: try again on the first input
-    if (armed) return;
-    armed = true;
-    const evs = ["pointerdown", "keydown", "touchend"];
-    const go = () => { armed = false; evs.forEach(ev => removeEventListener(ev, go, true)); startSong(); };
-    evs.forEach(ev => addEventListener(ev, go, true));
-  };
+  // Browsers won't start audio before the visitor has interacted with the page. If Sound was left on, the music
+  // waits here and starts on the first tap, click or key press anywhere (the Sound button handles its own click).
+  const GESTURES = ["pointerdown", "keydown", "touchend", "click"];
+  const onGesture = e => { if (!(e.target instanceof Node && btn.contains(e.target))) startSong(); };
+  const waitForGesture = () => { if (!armed) { armed = true; GESTURES.forEach(ev => addEventListener(ev, onGesture, true)); } };
+  const stopWaiting = () => { blocked = false; if (armed) { armed = false; GESTURES.forEach(ev => removeEventListener(ev, onGesture, true)); } };
   const startSong = () => {
     if (!on || !MUSIC_SRC || !canOpus || document.hidden) return;
     if (!song) { song = new Audio(MUSIC_SRC); song.loop = true; song.volume = 0; }
     const p = song.play();
-    if (p && p.then) p.then(() => ramp(MUSIC_VOL, 1500)).catch(waitForGesture);
+    if (p && p.then) p.then(() => { stopWaiting(); ramp(MUSIC_VOL, 1500); }).catch(() => { blocked = true; waitForGesture(); });
   };
   const stopSong = (ms = 400) => { if (song && !song.paused) ramp(0, ms, () => song.pause()); };
   document.addEventListener("visibilitychange", () => {
@@ -327,10 +293,11 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
   });
 
   btn.addEventListener("click", () => {
+    if (on && blocked) { tone(880); startSong(); return; }   // Sound already says On: this click is the go-ahead, not "off"
     on = !on; paint();
     try { localStorage.setItem("lorpcade-sound", on ? "1" : "0"); } catch (e) {}
     tone(880);
-    if (on) startSong(); else stopSong();
+    if (on) startSong(); else { stopWaiting(); stopSong(); }
   });
   paint();
   startSong();                                         // Sound was left on last visit
@@ -347,7 +314,7 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
   });
 
   // High scores. Every game is served from this same origin, so they share localStorage with this page. A
-  // cabinet's start row ("HI 012300") shows a game's best score if the game saved one under "lorpcade:hiscore:<folder>", or under the
+  // cabinet's "HI 012300" line shows a game's best score if the game saved one under "lorpcade:hiscore:<folder>", or under the
   // key its game.json names (data-hi-key). Values can be a number, a string, or JSON with the score in it.
   const readStore = key => { try { return localStorage.getItem(key); } catch (e) { return null; } };
   const SCORE_NAMES = ["score", "hiscore", "highscore", "highScore", "high_score", "best"];

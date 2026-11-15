@@ -5,7 +5,7 @@
         --soundfont path/to/GeneralUser_GS.sf2 \\
         -o tools/site/music/main_menu.opus
 
-Defaults: mono, 128 kbps, 48 kHz, loudness-normalised to about -18 LUFS (menu-music level) with 4 dB of
+Defaults: mono, 32 kbps, 48 kHz, loudness-normalised to about -18 LUFS (menu-music level) with 4 dB of
 true-peak headroom, because Opus can overshoot the pre-encode peak by a few dB. Normalisation is two-pass
 with one constant gain, so quiet intros and fade-outs stay quiet.
 
@@ -195,7 +195,7 @@ def main():
     ap.add_argument("midi", type=Path, help="input .mid file")
     ap.add_argument("-s", "--soundfont", help="SF2 (or SF3) soundfont to play the MIDI with")
     ap.add_argument("-o", "--out", type=Path, help="output file (default: next to the MIDI, .opus)")
-    ap.add_argument("-b", "--bitrate", default="128k", help="Opus bitrate (default 128k)")
+    ap.add_argument("-b", "--bitrate", default="32k", help="Opus bitrate (default 32k)")
     ap.add_argument("--stereo", action="store_true", help="keep stereo instead of mixing down to mono")
     ap.add_argument("-r", "--rate", type=int, default=48000, help="render sample rate (default 48000)")
     ap.add_argument("-g", "--gain", type=float, default=1.0,

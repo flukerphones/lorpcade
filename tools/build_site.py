@@ -29,6 +29,7 @@ ASSETS = "arcade-assets"  # the home screen's own files; can't be used as a game
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # Cabinet images picked up automatically, in priority order: cover.* first, then the older thumb.* names.
 COVERS = tuple(f"{stem}.{ext}" for stem in ("cover", "thumb") for ext in ("jpg", "jpeg", "webp", "png", "gif"))
+KNOWN_KEYS = {"title", "accent", "order", "hidden", "thumbnail", "highscore"}  # everything else in game.json is ignored
 MENU_MUSIC = "main_menu.opus"  # tools/site/music/main_menu.opus -> played on the home screen when Sound is on
 HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 NOT_GAMES = {"tools", "games", ASSETS, "node_modules"}  # top-level folders never treated as games
@@ -97,6 +98,10 @@ def load_game(slug, folder):
         v = raw.get(key)
         return v.strip() if isinstance(v, str) else ""
 
+    ignored = sorted(set(raw) - KNOWN_KEYS)
+    if ignored:
+        warn(f"{slug}/game.json: ignoring {', '.join(ignored)} (the home screen only shows name, cover and high score)")
+
     if raw.get("accent") and not norm_hex(raw["accent"]):
         warn(f"{slug}/game.json: 'accent' should look like #ff2e97; using an automatic colour")
 
@@ -116,24 +121,16 @@ def load_game(slug, folder):
         hiscore = {
             "key": hs["key"].strip(),
             "field": hs["field"].strip() if isinstance(hs.get("field"), str) else "",
-            "label": hs["label"].strip() if isinstance(hs.get("label"), str) and hs["label"].strip() else "HI",
             "digits": max(0, min(12, digits)) if isinstance(digits, int) and not isinstance(digits, bool) else 6,
         }
     elif hs is not None:
         warn(f"{slug}/game.json: 'highscore' should be a localStorage key, or an object with a \"key\"; ignoring it")
 
-    requires = raw.get("requires", [])
     order = raw.get("order", 100)
     return {
         "slug": slug,
         "title": text("title") or slug.replace("_", " ").replace("-", " ").title(),
-        "tagline": text("tagline"),
-        "description": text("description"),
-        "genre": text("genre"),
-        "players": text("players"),
-        "controls": text("controls"),
         "accent": norm_hex(raw.get("accent")) or auto_accent(slug),
-        "requires": [str(r).lower() for r in requires] if isinstance(requires, list) else [],
         "order": order if isinstance(order, (int, float)) else 100,
         "hidden": raw.get("hidden") is True,
         "thumb": thumb,
@@ -155,24 +152,15 @@ def render_card(game):
         hi_attrs += f' data-hi-key="{e(hs["key"])}" data-hi-digits="{hs["digits"]}"'
         if hs["field"]:
             hi_attrs += f' data-hi-field="{e(hs["field"])}"'
-    # The start row of the cabinet reads "HI 012300" (the page script fills in the real score).
-    hi_label = e(hs["label"]) if hs else "HI"
     hi_digits = hs["digits"] if hs else 6
-    tags = "".join(f"<li>{e(t)}</li>" for t in (game["genre"], game["players"], game["controls"]) if t)
-    tagline = f'<p class="tagline">{e(game["tagline"])}</p>' if game["tagline"] else ""
-    desc = f'<p class="desc">{e(game["description"])}</p>' if game["description"] else ""
+    hi_zero = "0" * hi_digits if hi_digits else "0"      # shown until the game has saved a score
     return f"""
       <li class="slot">
-        <a class="cab" href="{game["slug"]}/" style="--accent:{game["accent"]}" data-requires="{e(" ".join(game["requires"]))}"{hi_attrs}>
+        <a class="cab" href="{game["slug"]}/" style="--accent:{game["accent"]}"{hi_attrs}>
           <div class="frame"><div class="cab-in">
-            <div class="marquee"><span class="marquee-title">{e(game["title"])}</span></div>
+            <span class="sr">{e(game["title"])}</span>
             <div class="bezel"><div class="screen">{art}<span class="glass" aria-hidden="true"></span></div></div>
-            <div class="deck">
-              {tagline}{desc}
-              <ul class="tags">{tags}</ul>
-              <p class="warn">This game needs WebGPU, which this browser doesn’t report. Try a recent Chrome or Edge.</p>
-              <div class="start"><i class="btn" aria-hidden="true"></i><span class="start-label">{hi_label} <b class="hi-val">{"0" * hi_digits if hi_digits else "0"}</b></span></div>
-            </div>
+            <div class="deck">HI <b class="hi-val">{hi_zero}</b></div>
           </div></div>
         </a>
       </li>"""

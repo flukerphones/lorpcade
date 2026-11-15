@@ -33,20 +33,20 @@ Copy the game's finished files into a new folder. Any folder with an `index.html
 name is its URL (letters, digits, `_` and `-` only). Use **relative** URLs inside the game (`./game.js`,
 not `/game.js`), since it is served from a subfolder. Wasm needs a real http(s) server, which Pages is.
 
+### The cabinet
+
+Each game on the home screen shows two things: its **cover** image (square, with no overlay lines) and its
+**high score** (`HI 012300`). The game's name is not drawn, so put it on the cover. Nothing else is shown or read.
+
 ### `game.json` (optional)
 
-Without one, the game still appears, with a title made from the folder name and an automatic neon colour.
+Without one, the game still appears, with an automatic neon colour and a generated cover.
 
 ```json
 {
   "title": "Endless Sortie",
-  "tagline": "Arcade combat flight",
-  "description": "One or two sentences about the game.",
-  "genre": "Flight combat",
-  "players": "1 player",
-  "controls": "Mouse + keyboard",
+  "highscore": "endless_sortie_best",
   "accent": "#2de2ff",
-  "requires": ["webgpu"],
   "order": 10,
   "hidden": false
 }
@@ -54,22 +54,21 @@ Without one, the game still appears, with a title made from the folder name and 
 
 | Field | Effect |
 |---|---|
-| `title`, `tagline`, `description` | Marquee text and the blurb on the cabinet. |
-| `genre`, `players`, `controls` | Small tags under the blurb. |
+| `title` | Not shown; read aloud by screen readers in place of the cover's text. |
+| `highscore` | Where the game keeps its best score in `localStorage`. A key name (`"endless_sortie_best"`) or `{ "key": "...", "field": "stats.best", "digits": 0 }`. See *High scores* below. |
+| `thumbnail` | Cover image path inside the game folder (a square image works best; other shapes are centre-cropped to a square). Without it, a `cover.jpg` / `.webp` (also `.jpeg`, `.png`, `.gif`) in the folder is used, then the older `thumb.*` names, and without any of those the cabinet gets a generated screen. |
 | `accent` | Neon colour for the cabinet (a bright hex works best). |
-| `requires` | `["webgpu"]` shows a warning on the cabinet in browsers without WebGPU. |
 | `order` | Lower comes first (default 100). Ties sort by title. |
 | `hidden` | `true` still publishes the game at its URL but leaves it off the home screen. |
-| `highscore` | Where the game keeps its best score in `localStorage`, so the cabinet can show it. A key name (`"endless_sortie_best"`) or `{ "key": "...", "field": "stats.best", "label": "Best time", "digits": 0 }`. See *High scores* below. |
-| `thumbnail` | Image path inside the game folder. Without it, a `cover.jpg` / `.webp` (also `.jpeg`, `.png`, `.gif`) in the folder is used, then the older `thumb.*` names, and without any of those the cabinet gets a generated screen. |
+
+Any other field is ignored, and the build prints a warning naming it.
 
 ## High scores
 
 Every game is served from the same origin as the home screen, so they all share one `localStorage`, and the
-home screen can show a game's best score on its cabinet. The line beside the red button reads `HI 012300`. It reads
-`HI 000000` until a score exists and updates by itself, including when the player comes back with the Back button
-or a score is saved in another tab.
-Two ways to hook a game up:
+home screen can show a game's best score at the bottom of its cabinet, as `HI 012300`. It reads `HI 000000` until a
+score exists and updates by itself, including when the player comes back with the Back button or a score is saved
+in another tab. Two ways to hook a game up:
 
 **1. The game already saves a score.** Name its key in `game.json`. Open the game, play once, then look in
 DevTools > Application > Local Storage to find the key. No change to the game is needed.
@@ -80,7 +79,7 @@ DevTools > Application > Local Storage to find the key. No change to the game is
 
 A value can be a number (`12300`), text (`"2:31.4"`), or JSON. For JSON, say where the score is with `field`
 (`"stats.best"`); without it the page looks for `score`, `hiscore`, `highScore`, `high_score` or `best`.
-`label` replaces the `HI` caption and `digits` sets the zero padding (default 6; `0` turns padding off).
+`digits` sets the zero padding (default 6; `0` turns padding off).
 
 **2. A new or changed game.** Save the score under `lorpcade:hiscore:<folder-name>`. No `game.json` entry is
 needed:
@@ -111,7 +110,7 @@ python3 tools/midi_to_opus.py tools/music/main_menu.mid \
     -o tools/site/music/main_menu.opus
 ```
 
-It needs `fluidsynth` and `ffmpeg` (with libopus) on your PATH, and writes mono 128 kbps Opus at 48 kHz,
+It needs `fluidsynth` and `ffmpeg` (with libopus) on your PATH, and writes mono 32 kbps Opus at 48 kHz,
 loudness-normalised for menu use. `--stereo`, `--bitrate`, `--gain` and `--no-normalize` change that. Leave out
 `--soundfont` and it uses `$SOUNDFONT`, the first `.sf2` in `tools/soundfonts/`, or a system soundfont, in that
 order. Soundfonts are big, so `*.sf2` is git-ignored; commit only the rendered `.opus`. Delete the `.opus` and
