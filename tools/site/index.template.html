@@ -63,7 +63,7 @@ code { font: inherit; color: var(--yellow); }
 }
 .hud .lbl { color: var(--cyan); }
 .hud .val { margin-left: .8em; color: var(--ink); }
-.hud .free { color: var(--yellow); animation: blink 1.1s steps(1) infinite; }
+.hud .free { color: var(--yellow); }
 .hud button {
   font: inherit; text-transform: inherit; color: var(--cyan); background: none; border: 0;
   padding: 8px 0; cursor: pointer;
@@ -131,11 +131,6 @@ code { font: inherit; color: var(--yellow); }
 
 /* ---------- select screen ---------- */
 main { max-width: 1240px; margin: 0 auto; padding: clamp(20px, 4vh, 40px) clamp(16px, 4vw, 40px) 72px; }
-.select { margin: 0; text-align: center; font: 14px/1.6 var(--display); color: var(--yellow); text-transform: uppercase; }
-.select::after { content: "_"; margin-left: .15em; animation: blink 1s steps(1) infinite; }
-.hint { margin: 8px 0 28px; text-align: center; color: var(--dim); font-size: 24px; }
-.hint .touch { display: none; }
-@media (hover: none), (pointer: coarse) { .hint .keys { display: none; } .hint .touch { display: inline; } }
 
 .floor-plan {
   list-style: none; margin: 0; padding: 0; display: grid; gap: 36px 32px; justify-content: center;
@@ -210,8 +205,6 @@ main { max-width: 1240px; margin: 0 auto; padding: clamp(20px, 4vh, 40px) clamp(
 /* ---------- footer ---------- */
 footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: center; color: var(--dim); font-size: 21px; }
 
-@keyframes blink { 50% { opacity: 0; } }
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -222,7 +215,7 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
 
 <header class="hud">
   <div><span class="lbl">Games</span><span class="val">{{GAME_COUNT}}</span></div>
-  <div class="free">Free play</div>
+  <div class="free">Select a game</div>
   <button id="snd" type="button" aria-pressed="false" data-music="{{MUSIC}}"><span class="lbl">Sound</span><b>Off</b></button>
 </header>
 
@@ -232,8 +225,6 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
 </div>
 
 <main>
-  <h2 class="select">Select a game</h2>
-  <p class="hint"><span class="keys">Arrow keys to choose, Enter to start.</span><span class="touch">Tap a cabinet to start.</span></p>
   <ul class="floor-plan">{{CARDS}}
   </ul>
 </main>
