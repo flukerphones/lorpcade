@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- No viewport-fit=cover on purpose: on notched phones the browser then keeps the game (and its
+     touch controls) inside the safe area instead of under the notch / home bar. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lock-On">
+<meta name="theme-color" content="#000000">
+<!-- where the title screen's QUIT goes: the LORPcade home page, one level up from this game's folder -->
+<meta name="lorpcade-home" content="../">
+<title>LOCK-ON</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  }
+  /* The canvas is sized by CSS; the game follows it (winit reports every resize).
+     dvh = the visible height on phones, where 100vh includes the area under the browser bars. */
+  canvas#game { position: fixed; inset: 0; display: block; width: 100%; height: 100vh; height: 100dvh; outline: none; touch-action: none; }
+  #overlay, #rotate {
+    position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; background: rgba(0, 0, 0, 0.82); color: #cfe3f5; font: 600 18px/1.4 system-ui, sans-serif;
+    letter-spacing: 0.08em; text-align: center; padding: 24px; cursor: default; box-sizing: border-box;
+  }
+  #overlay h1 { margin: 0; font-size: 34px; letter-spacing: 0.22em; color: #fff; }
+  #overlay small { font-weight: 400; font-size: 14px; letter-spacing: 0.03em; opacity: 0.75; max-width: 46em; }
+  #overlay.ready { cursor: pointer; }
+  #saveTools { display: none; gap: 10px; margin-top: 6px; }
+  #overlay.ready #saveTools { display: flex; }
+  #saveTools button {
+    font: 600 13px/1 system-ui, sans-serif; letter-spacing: 0.08em; color: #cfe3f5; background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(207, 227, 245, 0.4); border-radius: 6px; padding: 9px 14px; cursor: pointer;
+  }
+  #saveTools button:hover { background: rgba(255, 255, 255, 0.18); }
+  #saveNote { min-height: 1.2em; font-size: 13px; opacity: 0.85; }
+  #overlay.gone { display: none; }
+  #overlay.error { color: #ffb4a8; }
+  /* phones in landscape are short: tighten the start screen */
+  body.mobile #overlay h1 { font-size: 26px; }
+  body.mobile #overlay { gap: 8px; font-size: 16px; }
+  body.mobile #overlay small { font-size: 13px; }
+  /* touch devices held upright: ask for landscape (the game is landscape only) */
+  #rotate { display: none; z-index: 10; background: #000; }
+  #rotate .icon { font-size: 54px; display: inline-block; animation: tilt 2.2s ease-in-out infinite; }
+  @keyframes tilt { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+  @media (orientation: portrait) { body.mobile #rotate { display: flex; } }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<div id="overlay">
+  <h1>LOCK-ON</h1>
+  <div id="msg">Loading...</div>
+  <small id="hint"></small>
+  <div id="saveTools">
+    <button id="saveExport" type="button">EXPORT SAVE</button>
+    <button id="saveImport" type="button">IMPORT SAVE</button>
+  </div>
+  <small id="saveNote"></small>
+  <input id="saveFile" type="file" accept=".txt,text/plain" hidden>
+</div>
+<div id="rotate"><span class="icon">&#128241;</span><div>ROTATE YOUR PHONE TO LANDSCAPE</div></div>
+<script type="module">
+  import init from "./lock_on.js";
+
+  const canvas = document.getElementById("game");
+  const overlay = document.getElementById("overlay");
+  const msg = document.getElementById("msg");
+  const hint = document.getElementById("hint");
+
+  // ---------------------------------------------------------------------------------------------
+  // Phones and tablets get touch controls + tilt steering. `?mobile=1` / `?mobile=0` forces it
+  // either way (handy for trying it in desktop browser devtools' device mode).
+  // ---------------------------------------------------------------------------------------------
+  const params = new URLSearchParams(location.search);
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  function detectMobile() {
+    if (params.has("mobile")) return params.get("mobile") !== "0";
+    if (navigator.userAgentData && navigator.userAgentData.mobile) return true;
+    if (/Android|iPhone|iPad|iPod|Mobile|Silk/i.test(ua) || isIOS) return true;
+    // anything else whose main input is a finger and that cannot hover (a mouse-driven touch laptop is not)
+    return matchMedia("(pointer: coarse)").matches && matchMedia("(hover: none)").matches && navigator.maxTouchPoints > 0;
+  }
+  const MOBILE = detectMobile();
+  if (MOBILE) document.body.classList.add("mobile");
+
+  // ---------------------------------------------------------------------------------------------
+  // Motion sensor bridge. The game (Rust) polls these every frame; see src/platform.rs.
+  // Tilt is reported in the *screen's* frame, so it is right whichever way the phone is landscape:
+  //   roll  = turning the phone like a steering wheel, clockwise (as you see it) = positive
+  //   pitch = top edge tipped away from you = positive
+  // Both come from the direction of gravity, so they are stable at any pose (no gimbal flip).
+  // ---------------------------------------------------------------------------------------------
+  let beta = null, gamma = null, lastEvent = 0, tiltDenied = false, tiltListening = false;
+
+  // <tilt-math>
+  const D2R = Math.PI / 180;
+  const clamp1 = (v) => Math.max(-1, Math.min(1, v));
+  // beta / gamma (W3C device orientation) + screen angle (0, 90, 180, 270) -> [roll, pitch] in degrees
+  function tiltFrom(betaDeg, gammaDeg, screenAngle) {
+    const b = betaDeg * D2R, g = gammaDeg * D2R;
+    // direction of "up" in the device's own frame
+    const dx = -Math.sin(g) * Math.cos(b), dy = Math.sin(b), dz = Math.cos(g) * Math.cos(b);
+    const a = ((Math.round(screenAngle / 90) * 90) % 360 + 360) % 360;
+    // ...and along the screen's right axis (the screen turns with the OS rotation)
+    const sx = a === 90 ? -dy : a === 180 ? -dx : a === 270 ? dy : dx;
+    return [Math.asin(clamp1(-sx)) / D2R, Math.asin(clamp1(dz)) / D2R];
+  }
+  // </tilt-math>
+
+  const screenAngle = () =>
+    (screen.orientation && typeof screen.orientation.angle === "number") ? screen.orientation.angle : (window.orientation || 0);
+
+  function onOrientation(e) {
+    if (e.beta == null || e.gamma == null) return; // desktop browsers fire one empty event
+    beta = e.beta; gamma = e.gamma; lastEvent = performance.now();
+  }
+  function listenForTilt() {
+    if (tiltListening || !("DeviceOrientationEvent" in window)) return;
+    tiltListening = true;
+    window.addEventListener("deviceorientation", onOrientation);
+  }
+  window.esIsMobile = () => MOBILE;
+  // 0 = no sensor (or it went quiet), 1 = readings flowing, 2 = permission refused
+  window.esTiltState = () => tiltDenied ? 2 : (beta !== null && performance.now() - lastEvent < 1000 ? 1 : 0);
+  window.esTiltRoll = () => beta === null ? 0 : tiltFrom(beta, gamma, screenAngle())[0];
+  window.esTiltPitch = () => beta === null ? 0 : tiltFrom(beta, gamma, screenAngle())[1];
+
+  if (MOBILE) {
+    // Android / most browsers: no permission needed. (iOS asks on the first tap, below.)
+    if (!(typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function")) listenForTilt();
+    // no pinch zoom, no scrolling, no long-press menu: it is a game
+    document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("gesturestart", (e) => e.preventDefault());
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Music. The soundtrack is packed into the wasm file as Opus (src/audio/web.rs hands a track over each time
+  // it is asked for); Web Audio decodes it the first time it plays and keeps the last few. Loops use the
+  // song's own loop points, so intros play once. No sound effects here (they only exist as live MIDI).
+  // ---------------------------------------------------------------------------------------------
+  let actx = null, master = null, musicRate = 1, curTrack = null, pendingTrack = null, playToken = 0;
+  const decoded = new Map(); // name -> AudioBuffer, least recently used first
+
+  function audioCtx() {
+    if (!actx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      actx = new AC();
+      master = actx.createGain();
+      master.gain.value = 0.8;
+      master.connect(actx.destination);
+    }
+    return actx;
+  }
+  // `bytes` is a view into the wasm memory that is only valid during the call: copy it before awaiting.
+  async function trackBuffer(name, bytes) {
+    if (decoded.has(name)) { const b = decoded.get(name); decoded.delete(name); decoded.set(name, b); return b; }
+    const copy = bytes.slice().buffer;
+    const buf = await audioCtx().decodeAudioData(copy);
+    decoded.set(name, buf);
+    while (decoded.size > 4) decoded.delete(decoded.keys().next().value);
+    return buf;
+  }
+  function stopTrack() {
+    if (!curTrack) return;
+    curTrack.ended = true;
+    if (curTrack.src) { curTrack.src.onended = null; try { curTrack.src.stop(); } catch (_) {} }
+    curTrack = null;
+  }
+  function startTrack(name, looping, ls, le, bufPromise) {
+    const token = ++playToken;
+    pendingTrack = null;
+    stopTrack();
+    const entry = curTrack = { name, looping, src: null, ended: false };
+    bufPromise.then((buf) => {
+      if (token !== playToken) return;
+      const src = actx.createBufferSource();
+      src.buffer = buf;
+      src.loop = looping;
+      if (looping && le > ls && ls >= 0) { src.loopStart = ls; src.loopEnd = Math.min(le, buf.duration); }
+      src.playbackRate.value = looping ? musicRate : 1;
+      src.connect(master);
+      src.onended = () => {
+        entry.ended = true;
+        if (curTrack === entry && pendingTrack) { const q = pendingTrack; startTrack(q.name, q.looping, q.ls, q.le, q.buf); }
+      };
+      src.start();
+      entry.src = src;
+    }).catch((e) => { entry.ended = true; console.warn("music: could not play", name, e); });
+  }
+  window.esMusicPlay = (name, bytes, looping, queue, ls, le) => {
+    if (!audioCtx()) return;
+    if (queue && curTrack && !curTrack.looping && !curTrack.ended) { // wait for the one-shot that is playing
+      pendingTrack = { name, looping, ls, le, buf: trackBuffer(name, bytes) };
+      return;
+    }
+    if (curTrack && curTrack.name === name && curTrack.looping === looping && !curTrack.ended) return;
+    startTrack(name, looping, ls, le, trackBuffer(name, bytes));
+  };
+  window.esMusicRate = (r) => {
+    musicRate = r;
+    if (curTrack && curTrack.looping && curTrack.src) curTrack.src.playbackRate.value = r;
+  };
+  // autoplay rules: the context starts suspended until a gesture; any tap / key resumes it. A hidden tab is silent.
+  function wakeAudio() { if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
+  for (const ev of ["pointerdown", "touchend", "keydown", "click"]) window.addEventListener(ev, wakeAudio, { capture: true });
+  document.addEventListener("visibilitychange", () => {
+    if (!actx) return;
+    if (document.visibilityState === "hidden") actx.suspend().catch(() => {}); else wakeAudio();
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Saves live in this browser's localStorage. Chrome sync does NOT carry site data across devices, so the
+  // start screen has EXPORT / IMPORT: a plain-text file (same sealed format as the Windows savegame.txt) that can
+  // be moved by Drive, e-mail, a messaging app... The page also asks the browser to keep the data safe
+  // from automatic clean-up.
+  // ---------------------------------------------------------------------------------------------
+  const SAVE_KEY = "lorpcade:lock_on:save";
+  const saveNote = document.getElementById("saveNote");
+  const say = (t) => { saveNote.textContent = t; };
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) {}
+  function readSave() { try { return localStorage.getItem(SAVE_KEY); } catch (_) { return null; } }
+
+  document.getElementById("saveExport").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const txt = readSave();
+    if (!txt) { say("Nothing to export yet: play a sortie first."); return; }
+    try {
+      const url = URL.createObjectURL(new Blob([txt], { type: "text/plain" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = "lockon-save.txt";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      let copied = false;
+      try { await navigator.clipboard.writeText(txt); copied = true; } catch (_) {}
+      say("Saved lockon-save.txt" + (copied ? " (and copied to the clipboard)" : "") + ". Use IMPORT SAVE on the other device.");
+    } catch (_) { say("Could not export the save."); }
+  });
+  const saveFile = document.getElementById("saveFile");
+  document.getElementById("saveImport").addEventListener("click", (e) => { e.stopPropagation(); saveFile.click(); });
+  saveFile.addEventListener("click", (e) => e.stopPropagation());
+  saveFile.addEventListener("change", async () => {
+    const f = saveFile.files && saveFile.files[0];
+    saveFile.value = "";
+    if (!f) return;
+    const txt = await f.text();
+    const looksRight = /^\s*LOSAVE1:[A-Za-z0-9_-]+\s*$/.test(txt) || (/^credits=\d+/m.test(txt) && /^levels=/m.test(txt));
+    if (!looksRight) { say("That does not look like a Lock-On save file."); return; }
+    if (readSave() && !confirm("Replace the progress saved in this browser with the imported save?")) return;
+    try { localStorage.setItem(SAVE_KEY, txt); location.reload(); } catch (_) { say("Could not write the save (is storage blocked?)."); }
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // The LORPcade home page (https://flukerphones.github.io/lorpcade/). The game lives in a folder one level
+  // below it, so "../" reaches the home page wherever the site is hosted; the <meta name="lorpcade-home">
+  // in the <head> can point elsewhere.
+  //  * esGoHome: the title screen's QUIT. Leaves fullscreen / the landscape lock first, then navigates.
+  //  * esHiscore: the game reports its best Score Attack score; it is kept under the key the home page reads for
+  //    this game's cabinet ("HI 012300"): lorpcade:hiscore:<this folder's name>. The page keeps the key in
+  //    sync with the save, so an imported save updates the cabinet too.
+  // ---------------------------------------------------------------------------------------------
+  const homeMeta = document.querySelector('meta[name="lorpcade-home"]');
+  window.esGoHome = () => {
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (_) {}
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (_) {}
+    location.assign(new URL((homeMeta && homeMeta.content) || "../", location.href).href);
+  };
+  const folderName = (() => {
+    const meta = document.querySelector('meta[name="lorpcade-slug"]');
+    if (meta && meta.content) return meta.content;
+    const parts = location.pathname.split("/").filter(Boolean);
+    if (parts.length && /\.[a-z0-9]+$/i.test(parts[parts.length - 1])) parts.pop(); // .../index.html
+    return parts.length ? decodeURIComponent(parts[parts.length - 1]) : "lock_on";
+  })();
+  window.esHiscore = (score) => {
+    try {
+      const key = "lorpcade:hiscore:" + folderName, v = String(Math.max(0, Math.floor(score)));
+      if (localStorage.getItem(key) !== v) localStorage.setItem(key, v);
+    } catch (_) {}
+  };
+
+  // ---------------------------------------------------------------------------------------------
+  // Everything that needs the first tap: fullscreen, landscape lock, motion permission, wake lock.
+  // ---------------------------------------------------------------------------------------------
+  const fsRoot = document.documentElement;
+  const fsRequest = fsRoot.requestFullscreen || fsRoot.webkitRequestFullscreen;
+  const standalone = window.navigator.standalone === true || matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches;
+  let wakeLock = null;
+
+  async function acquireWakeLock() {
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {}
+  }
+  document.addEventListener("visibilitychange", () => { if (MOBILE && document.visibilityState === "visible" && !overlay.classList.contains("ready")) acquireWakeLock(); });
+
+  async function startMobile() {
+    // all three requests must be made straight from the tap, so fire them together
+    const fs = (fsRequest && !document.fullscreenElement && !document.webkitFullscreenElement)
+      ? Promise.resolve(fsRequest.call(fsRoot, { navigationUI: "hide" })).catch(() => {}) : Promise.resolve();
+    let perm = Promise.resolve();
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      perm = DeviceOrientationEvent.requestPermission()
+        .then((r) => { if (r === "granted") listenForTilt(); else tiltDenied = true; })
+        .catch(() => { tiltDenied = true; });
+    }
+    acquireWakeLock();
+    await Promise.all([fs, perm]);
+    // landscape lock only works once fullscreen is up (and not at all on iOS Safari)
+    try { if (screen.orientation && screen.orientation.lock) await screen.orientation.lock("landscape"); } catch (_) {}
+  }
+
+  function fail(text) {
+    overlay.className = "error";
+    msg.textContent = text;
+    hint.textContent = "Open the browser console (F12) for details.";
+  }
+
+  if (!navigator.gpu) {
+    fail("This browser has no WebGPU support.");
+    hint.textContent = "Use a recent Chrome, Edge, Firefox or Safari with WebGPU enabled, on a device with a supported GPU.";
+  } else {
+    // Any panic in the game ends up here (the wasm module traps).
+    window.addEventListener("error", () => fail("Something went wrong."));
+    window.addEventListener("unhandledrejection", () => fail("Something went wrong."));
+
+    init().then(() => {
+      if (MOBILE) {
+        msg.textContent = "TAP TO START";
+        hint.textContent = "Tilt your phone to roll and pitch; the two rudder buttons yaw. Left thumb: cannon, missile / bomb, weapon switch, flares. Right thumb: throttle slider, boost, brake. Each sortie starts with a 3-second countdown: get the phone into your flying position, and that pose becomes level. Progress is saved in this browser.";
+        // iPhone Safari cannot go fullscreen from a web page; a home-screen app can
+        if (isIOS && !fsRequest && !standalone) {
+          hint.textContent += " For full screen on iPhone: Share, then Add to Home Screen, and open it from there.";
+        }
+      } else {
+        msg.textContent = "CLICK TO START";
+        hint.textContent = "Mouse + keyboard. Progress is saved in this browser (it does not follow you between devices; use EXPORT / IMPORT SAVE for that).";
+      }
+      overlay.classList.add("ready");
+      // Keyboard events go to the focused canvas, and audio / pointer lock need a user gesture anyway.
+      overlay.addEventListener("click", () => {
+        overlay.classList.add("gone");
+        canvas.focus();
+        if (MOBILE) startMobile();
+      }, { once: true });
+    }).catch((e) => { console.error(e); fail("Failed to load the game."); });
+  }
+</script>
+</body>
+</html>
