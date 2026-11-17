@@ -73,7 +73,7 @@
   const hint = document.getElementById("hint");
 
   // ---------------------------------------------------------------------------------------------
-  // Phones and tablets get touch controls + tilt steering. `?mobile=1` / `?mobile=0` forces it
+  // Phones and tablets get touch controls (drag the open screen to steer). `?mobile=1` / `?mobile=0` forces it
   // either way (handy for trying it in desktop browser devtools' device mode).
   // ---------------------------------------------------------------------------------------------
   const params = new URLSearchParams(location.search);
@@ -89,51 +89,9 @@
   const MOBILE = detectMobile();
   if (MOBILE) document.body.classList.add("mobile");
 
-  // ---------------------------------------------------------------------------------------------
-  // Motion sensor bridge. The game (Rust) polls these every frame; see src/platform.rs.
-  // Tilt is reported in the *screen's* frame, so it is right whichever way the phone is landscape:
-  //   roll  = turning the phone like a steering wheel, clockwise (as you see it) = positive
-  //   pitch = top edge tipped away from you = positive
-  // Both come from the direction of gravity, so they are stable at any pose (no gimbal flip).
-  // ---------------------------------------------------------------------------------------------
-  let beta = null, gamma = null, lastEvent = 0, tiltDenied = false, tiltListening = false;
-
-  // <tilt-math>
-  const D2R = Math.PI / 180;
-  const clamp1 = (v) => Math.max(-1, Math.min(1, v));
-  // beta / gamma (W3C device orientation) + screen angle (0, 90, 180, 270) -> [roll, pitch] in degrees
-  function tiltFrom(betaDeg, gammaDeg, screenAngle) {
-    const b = betaDeg * D2R, g = gammaDeg * D2R;
-    // direction of "up" in the device's own frame
-    const dx = -Math.sin(g) * Math.cos(b), dy = Math.sin(b), dz = Math.cos(g) * Math.cos(b);
-    const a = ((Math.round(screenAngle / 90) * 90) % 360 + 360) % 360;
-    // ...and along the screen's right axis (the screen turns with the OS rotation)
-    const sx = a === 90 ? -dy : a === 180 ? -dx : a === 270 ? dy : dx;
-    return [Math.asin(clamp1(-sx)) / D2R, Math.asin(clamp1(dz)) / D2R];
-  }
-  // </tilt-math>
-
-  const screenAngle = () =>
-    (screen.orientation && typeof screen.orientation.angle === "number") ? screen.orientation.angle : (window.orientation || 0);
-
-  function onOrientation(e) {
-    if (e.beta == null || e.gamma == null) return; // desktop browsers fire one empty event
-    beta = e.beta; gamma = e.gamma; lastEvent = performance.now();
-  }
-  function listenForTilt() {
-    if (tiltListening || !("DeviceOrientationEvent" in window)) return;
-    tiltListening = true;
-    window.addEventListener("deviceorientation", onOrientation);
-  }
   window.esIsMobile = () => MOBILE;
-  // 0 = no sensor (or it went quiet), 1 = readings flowing, 2 = permission refused
-  window.esTiltState = () => tiltDenied ? 2 : (beta !== null && performance.now() - lastEvent < 1000 ? 1 : 0);
-  window.esTiltRoll = () => beta === null ? 0 : tiltFrom(beta, gamma, screenAngle())[0];
-  window.esTiltPitch = () => beta === null ? 0 : tiltFrom(beta, gamma, screenAngle())[1];
 
   if (MOBILE) {
-    // Android / most browsers: no permission needed. (iOS asks on the first tap, below.)
-    if (!(typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function")) listenForTilt();
     // no pinch zoom, no scrolling, no long-press menu: it is a game
     document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
     document.addEventListener("gesturestart", (e) => e.preventDefault());
@@ -287,7 +245,7 @@
   };
 
   // ---------------------------------------------------------------------------------------------
-  // Everything that needs the first tap: fullscreen, landscape lock, motion permission, wake lock.
+  // Everything that needs the first tap: fullscreen, landscape lock, wake lock.
   // ---------------------------------------------------------------------------------------------
   const fsRoot = document.documentElement;
   const fsRequest = fsRoot.requestFullscreen || fsRoot.webkitRequestFullscreen;
@@ -300,17 +258,11 @@
   document.addEventListener("visibilitychange", () => { if (MOBILE && document.visibilityState === "visible" && !overlay.classList.contains("ready")) acquireWakeLock(); });
 
   async function startMobile() {
-    // all three requests must be made straight from the tap, so fire them together
+    // the requests must be made straight from the tap, so fire them together
     const fs = (fsRequest && !document.fullscreenElement && !document.webkitFullscreenElement)
       ? Promise.resolve(fsRequest.call(fsRoot, { navigationUI: "hide" })).catch(() => {}) : Promise.resolve();
-    let perm = Promise.resolve();
-    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
-      perm = DeviceOrientationEvent.requestPermission()
-        .then((r) => { if (r === "granted") listenForTilt(); else tiltDenied = true; })
-        .catch(() => { tiltDenied = true; });
-    }
     acquireWakeLock();
-    await Promise.all([fs, perm]);
+    await fs;
     // landscape lock only works once fullscreen is up (and not at all on iOS Safari)
     try { if (screen.orientation && screen.orientation.lock) await screen.orientation.lock("landscape"); } catch (_) {}
   }
@@ -332,7 +284,7 @@
     init().then(() => {
       if (MOBILE) {
         msg.textContent = "TAP TO START";
-        hint.textContent = "Tilt your phone to roll and pitch; the two rudder buttons yaw. Left thumb: cannon, missile / bomb, weapon switch, flares. Right thumb: throttle slider, boost, brake. Each sortie starts with a 3-second countdown: get the phone into your flying position, and that pose becomes level. Progress is saved in this browser.";
+        hint.textContent = "Drag a finger on the open screen to steer, like a mouse: left / right yaws, up / down pitches. Left thumb: cannon, missile / bomb, weapon switch, flares. Right thumb: throttle slider, boost, brake. Each sortie starts with a 3-second countdown. Progress is saved in this browser.";
         // iPhone Safari cannot go fullscreen from a web page; a home-screen app can
         if (isIOS && !fsRequest && !standalone) {
           hint.textContent += " For full screen on iPhone: Share, then Add to Home Screen, and open it from there.";
