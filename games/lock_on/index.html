@@ -99,9 +99,50 @@
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Tilt steering (phones). The game wants "which way is down" in screen axes (x right, y up the screen, z out of it),
+  // from which it works out pitch and roll (src/touch.rs). The device-orientation angles are turned into that vector
+  // here, with the screen's rotation applied, so it is right whichever way round the phone is held in landscape.
+  // iPhones ask permission first, which has to come from a tap: enableTilt() is called from the start-screen tap.
+  // `?tilt=0` switches it off.
+  // ---------------------------------------------------------------------------------------------
+  const TILT_WANTED = MOBILE && params.get("tilt") !== "0";
+  let grav = null, gravAt = 0, tiltListening = false;
+  function onOrient(e) {
+    if (e.beta == null || e.gamma == null) return;
+    const b = e.beta * Math.PI / 180, g = e.gamma * Math.PI / 180;
+    // down, in the device's own axes (x right, y up, z out of the screen when held upright in portrait)
+    const dx = Math.cos(b) * Math.sin(g), dy = -Math.sin(b), dz = -Math.cos(b) * Math.cos(g);
+    let a = (screen.orientation && typeof screen.orientation.angle === "number") ? screen.orientation.angle : (window.orientation || 0);
+    a = ((a % 360) + 360) % 360;
+    let sx = dx, sy = dy;
+    if (a === 90) { sx = -dy; sy = dx; } else if (a === 270) { sx = dy; sy = -dx; } else if (a === 180) { sx = -dx; sy = -dy; }
+    grav = [sx, sy, dz];
+    gravAt = performance.now();
+  }
+  function listenTilt() {
+    if (tiltListening) return;
+    tiltListening = true;
+    window.addEventListener("deviceorientation", onOrient, true);
+  }
+  function enableTilt() {
+    if (!TILT_WANTED) return;
+    try {
+      const DOE = window.DeviceOrientationEvent;
+      if (DOE && typeof DOE.requestPermission === "function") {
+        DOE.requestPermission().then((r) => { if (r === "granted") listenTilt(); }).catch(() => {});
+      } else if (DOE) listenTilt();
+    } catch (_) {}
+  }
+  // NaN = no reading (no sensor, no permission, or nothing for the last moments)
+  const gravAxis = (i) => (grav && performance.now() - gravAt < 800) ? grav[i] : NaN;
+  window.esGravityX = () => gravAxis(0);
+  window.esGravityY = () => gravAxis(1);
+  window.esGravityZ = () => gravAxis(2);
+
+  // ---------------------------------------------------------------------------------------------
   // Music. The soundtrack is packed into the wasm file as Opus (src/audio/web.rs hands a track over each time
   // it is asked for); Web Audio decodes it the first time it plays and keeps the last few. Loops use the
-  // song's own loop points, so intros play once. No sound effects here (they only exist as live MIDI).
+  // song's own loop points, so intros play once. (The sound effects are further down.)
   // ---------------------------------------------------------------------------------------------
   let actx = null, master = null, musicRate = 1, curTrack = null, pendingTrack = null, playToken = 0;
   const decoded = new Map(); // name -> AudioBuffer, least recently used first
@@ -166,6 +207,123 @@
     musicRate = r;
     if (curTrack && curTrack.looping && curTrack.src) curTrack.src.playbackRate.value = r;
   };
+  // ---------------------------------------------------------------------------------------------
+  // Sound effects. Like the music they are Opus renders packed into the wasm file (src/audio/web.rs hands every one
+  // over once, at start-up, so they are decoded before they are needed). Playing one afterwards is just its name.
+  //  * one-shots (cannon, rocket, flare, explosions...) play once; the game stops the cannon burst by name
+  //  * two alarm slots loop (0 = missile warning, 1 = terrain / stall)
+  //  * the engine drone has no live synth here: the steady middle of the cruise render loops, its pitch follows the
+  //    throttle (playbackRate), and the afterburner render fades in on top of it when boosting
+  // ---------------------------------------------------------------------------------------------
+  const sfx = new Map(); // name -> { buf: Promise<AudioBuffer>, ls, le }
+  const SFX_LEVEL = { cannon_burst: 0.5, cannon_single: 0.5, rocket_launch: 0.9, _explosion: 0.9, _big_explosion: 1.0, _hit: 0.9,
+                      missile_lock: 0.55, missile_incoming: 0.6, missile_imminent: 0.65, pull_up_beep: 0.55, pull_up_siren: 0.6 };
+  const MAX_SHOTS = 16;
+  let sfxBusNode = null;
+  const shots = [];          // live one-shot voices, oldest first
+  const alarmVoice = [null, null], alarmName = ["", ""];
+  let eng = null;
+
+  function sfxBus() {
+    if (!sfxBusNode && audioCtx()) { sfxBusNode = actx.createGain(); sfxBusNode.gain.value = 0.9; sfxBusNode.connect(master); }
+    return sfxBusNode;
+  }
+  window.esSfxLoad = (name, bytes, ls, le) => {
+    if (!audioCtx()) return;
+    const buf = actx.decodeAudioData(bytes.slice().buffer); // copy: `bytes` is a view into the wasm memory
+    buf.catch((e) => console.warn("sfx: could not decode", name, e));
+    sfx.set(name, { buf, ls, le });
+  };
+  function voice(name, loop) {
+    const e = sfx.get(name);
+    if (!e || !sfxBus()) return null;
+    const gain = actx.createGain();
+    gain.gain.value = SFX_LEVEL[name] ?? 0.8;
+    gain.connect(sfxBus());
+    const v = { name, src: null, gain, dead: false };
+    e.buf.then((buf) => {
+      if (v.dead) return;
+      const src = actx.createBufferSource();
+      src.buffer = buf;
+      if (loop && e.le > e.ls) { src.loop = true; src.loopStart = e.ls; src.loopEnd = Math.min(e.le, buf.duration); }
+      src.connect(gain);
+      src.onended = () => { v.dead = true; try { gain.disconnect(); } catch (_) {} const i = shots.indexOf(v); if (i >= 0) shots.splice(i, 1); };
+      src.start();
+      v.src = src;
+    }).catch(() => {});
+    return v;
+  }
+  // a short fade instead of a hard cut, so stopping a sound does not click
+  function endVoice(v, fade = 0.04) {
+    if (!v || v.dead) return;
+    v.dead = true;
+    try {
+      const t = actx.currentTime;
+      v.gain.gain.cancelScheduledValues(t);
+      v.gain.gain.setValueAtTime(v.gain.gain.value, t);
+      v.gain.gain.linearRampToValueAtTime(0, t + fade);
+      if (v.src) { v.src.onended = null; v.src.stop(t + fade + 0.01); }
+      setTimeout(() => { try { v.gain.disconnect(); } catch (_) {} }, (fade + 0.1) * 1000);
+    } catch (_) {}
+  }
+  window.esSfxPlay = (name) => {
+    const v = voice(name, false);
+    if (!v) return;
+    shots.push(v);
+    while (shots.length > MAX_SHOTS) endVoice(shots.shift(), 0.02);
+  };
+  window.esSfxStop = (name) => {
+    for (let i = shots.length - 1; i >= 0; i--) if (shots[i].name === name) endVoice(shots.splice(i, 1)[0]);
+  };
+  window.esAlarm = (slot, name) => {
+    if (slot < 0 || slot > 1 || alarmName[slot] === name) return;
+    alarmName[slot] = name;
+    endVoice(alarmVoice[slot], 0.05);
+    alarmVoice[slot] = name ? voice(name, true) : null;
+  };
+  function engineStart() {
+    const c = sfx.get("engine_cruise"), b = sfx.get("engine_afterburner");
+    if (!c || !b || !sfxBus()) return;
+    const e = eng = { parts: [], ready: false, thr: 0.5, boost: false };
+    Promise.all([c.buf, b.buf]).then(([cb, bb]) => {
+      if (eng !== e) return;
+      for (const [buf, ent] of [[cb, c], [bb, b]]) {
+        const src = actx.createBufferSource();
+        src.buffer = buf; src.loop = true; src.loopStart = ent.ls; src.loopEnd = Math.min(ent.le, buf.duration);
+        const gain = actx.createGain();
+        gain.gain.value = 0;
+        src.connect(gain); gain.connect(sfxBus());
+        src.start(0, ent.ls);
+        e.parts.push({ src, gain });
+      }
+      e.ready = true;
+      engineApply(e);
+    }).catch(() => { if (eng === e) eng = null; });
+  }
+  function engineApply(e) {
+    if (!e.ready) return;
+    const t = actx.currentTime, rate = 0.85 + 0.5 * e.thr + (e.boost ? 0.1 : 0);
+    const [cruise, burn] = e.parts;
+    cruise.src.playbackRate.setTargetAtTime(rate, t, 0.15);
+    burn.src.playbackRate.setTargetAtTime(rate, t, 0.15);
+    cruise.gain.gain.setTargetAtTime(0.16 + 0.2 * e.thr, t, 0.15);
+    burn.gain.gain.setTargetAtTime(e.boost ? 0.4 : 0, t, 0.25);
+  }
+  window.esEngine = (on, thr, boost) => {
+    if (!on) {
+      if (eng) {
+        const e = eng; eng = null;
+        if (e.ready) for (const p of e.parts) { try { p.gain.gain.setTargetAtTime(0, actx.currentTime, 0.08); p.src.stop(actx.currentTime + 0.4); } catch (_) {} }
+      }
+      return;
+    }
+    if (!audioCtx()) return;
+    if (!eng) engineStart();
+    if (!eng) return;
+    eng.thr = thr; eng.boost = boost;
+    engineApply(eng);
+  };
+
   // autoplay rules: the context starts suspended until a gesture; any tap / key resumes it. A hidden tab is silent.
   function wakeAudio() { if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
   for (const ev of ["pointerdown", "touchend", "keydown", "click"]) window.addEventListener(ev, wakeAudio, { capture: true });
@@ -284,7 +442,7 @@
     init().then(() => {
       if (MOBILE) {
         msg.textContent = "TAP TO START";
-        hint.textContent = "Drag a finger on the open screen to steer, like a mouse: left / right yaws, up / down pitches. Left thumb: cannon, missile / bomb, weapon switch, flares. Right thumb: throttle slider, boost, brake. Each sortie starts with a 3-second countdown. Progress is saved in this browser.";
+        hint.textContent = "Tilt the phone to roll and pitch (hold it how you like during the 3-second countdown: that is level), and drag a finger on the open screen to steer more, like a mouse. Left thumb: cannon, missile / bomb, weapon switch, flares. Right thumb: throttle slider, boost, brake. Each sortie starts with a 3-second countdown. Progress is saved in this browser.";
         // iPhone Safari cannot go fullscreen from a web page; a home-screen app can
         if (isIOS && !fsRequest && !standalone) {
           hint.textContent += " For full screen on iPhone: Share, then Add to Home Screen, and open it from there.";
@@ -298,7 +456,7 @@
       overlay.addEventListener("click", () => {
         overlay.classList.add("gone");
         canvas.focus();
-        if (MOBILE) startMobile();
+        if (MOBILE) { enableTilt(); startMobile(); }
       }, { once: true });
     }).catch((e) => { console.error(e); fail("Failed to load the game."); });
   }

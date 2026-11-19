@@ -248,8 +248,26 @@ function __wbg_get_imports() {
         __wbg_error_9b95f63d905893d2: function(arg0, arg1) {
             console.error(arg0, arg1);
         },
+        __wbg_esAlarm_7795d3223fd3e9c0: function() { return handleError(function (arg0, arg1, arg2) {
+            esAlarm(arg0 >>> 0, getStringFromWasm0(arg1, arg2));
+        }, arguments); },
+        __wbg_esEngine_a148aa40d662f91b: function() { return handleError(function (arg0, arg1, arg2) {
+            esEngine(arg0 !== 0, arg1, arg2 !== 0);
+        }, arguments); },
         __wbg_esGoHome_da2267cab98a5ee1: function() { return handleError(function () {
             esGoHome();
+        }, arguments); },
+        __wbg_esGravityX_737283cef7b0e2ab: function() { return handleError(function () {
+            const ret = esGravityX();
+            return ret;
+        }, arguments); },
+        __wbg_esGravityY_cb95890ed6a0a18a: function() { return handleError(function () {
+            const ret = esGravityY();
+            return ret;
+        }, arguments); },
+        __wbg_esGravityZ_d2ec6c43efbfd6d4: function() { return handleError(function () {
+            const ret = esGravityZ();
+            return ret;
         }, arguments); },
         __wbg_esHiscore_4148d086f083fb87: function() { return handleError(function (arg0) {
             esHiscore(arg0);
@@ -263,6 +281,15 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_esMusicRate_5cb35de2aea8d7cf: function() { return handleError(function (arg0) {
             esMusicRate(arg0);
+        }, arguments); },
+        __wbg_esSfxLoad_33bfb0183e4089f7: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5) {
+            esSfxLoad(getStringFromWasm0(arg0, arg1), getArrayU8FromWasm0(arg2, arg3), arg4, arg5);
+        }, arguments); },
+        __wbg_esSfxPlay_d321eb430312b2a0: function() { return handleError(function (arg0, arg1) {
+            esSfxPlay(getStringFromWasm0(arg0, arg1));
+        }, arguments); },
+        __wbg_esSfxStop_98687d49ed72494e: function() { return handleError(function (arg0, arg1) {
+            esSfxStop(getStringFromWasm0(arg0, arg1));
         }, arguments); },
         __wbg_exitFullscreen_794b11803d43004f: function(arg0) {
             arg0.exitFullscreen();
