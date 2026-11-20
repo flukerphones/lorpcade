@@ -95,6 +95,20 @@ leaderboard (that would need a server). On a `<user>.github.io` project site eve
 `localStorage`, which is why the convention key is prefixed `lorpcade:`; avoid generic names like `score` in
 `game.json`. Clearing site data or private browsing loses the scores.
 
+## Cloud saves
+
+Progress can follow a player between devices with a **sync code** (no login): the home page's **Sync** button creates
+one or takes one from another device, and every game on the site then shares the same saves. Data goes to Firestore
+under `saves/{code}/games/{folder-name}`. **Setup (about ten minutes, free plan): [`instruction.md`](instruction.md).**
+
+- `tools/site/lorpcade-sync.js` is the one shared script (published as `arcade-assets/lorpcade-sync.js`). The home page
+  uses it to sync on open and whenever it comes back into view; a game includes it with one `<script>` tag and gets
+  syncing for any `localStorage` keys named `lorpcade:<folder-name>:<name>` (plus `lorpcade:hiscore:<folder-name>`).
+- `tools/site/sync-config.json` holds the two Firebase values. Left as the `YOUR_...` placeholders, cloud saves are off:
+  no button, no network. `build_site.py` says which it is.
+- `firestore.rules` is what to paste into the Firebase console.
+- Folder names `sync`, `backup` and `hiscore` are reserved (the build skips them with a warning).
+
 ## Home screen music
 
 The **Sound** switch in the top bar turns on the chiptune bleeps and, if the site has it, loops

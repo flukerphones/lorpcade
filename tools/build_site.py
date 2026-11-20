@@ -20,7 +20,6 @@ import os
 import re
 import shutil
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +32,8 @@ KNOWN_KEYS = {"title", "accent", "order", "hidden", "thumbnail", "highscore"}  #
 MENU_MUSIC = "main_menu.opus"  # tools/site/music/main_menu.opus -> played on the home screen when Sound is on
 HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 NOT_GAMES = {"tools", "games", ASSETS, "node_modules"}  # top-level folders never treated as games
+RESERVED_SLUGS = {"sync", "backup", "hiscore"}  # would collide with the cloud-save keys (lorpcade:sync:..., see README)
+SYNC_FILES = ("lorpcade-sync.js", "sync-config.json")  # tools/site/ -> <site>/arcade-assets/ (shared by the home screen and every game)
 
 
 def die(msg):
@@ -56,6 +57,9 @@ def discover():
             if not p.is_dir() or p.name.startswith((".", "_")) or not (p / "index.html").is_file():
                 continue
             if base == ROOT and p.name in NOT_GAMES:
+                continue
+            if p.name in RESERVED_SLUGS:
+                warn(f"skipping {p.relative_to(ROOT)}: '{p.name}' is reserved by the cloud-save keys; rename the folder")
                 continue
             if not SLUG_RE.match(p.name) or p.name == ASSETS:
                 warn(f"skipping {p.relative_to(ROOT)}: folder names may only use letters, digits, '_' and '-' "
@@ -170,6 +174,25 @@ EMPTY = ('<li class="empty"><p>No games on the floor yet.</p>'
          '<p>Add a game folder with an <code>index.html</code> and push to the main branch.</p></li>')
 
 
+def publish_sync(out: Path):
+    """Cloud saves: copy the shared script and its Firebase config next to the fonts. Without a real config the
+    scripts still publish, but the site shows no SYNC button and games skip syncing (see instruction.md)."""
+    for name in SYNC_FILES:
+        src = SITE_SRC / name
+        if not src.is_file():
+            warn(f"tools/site/{name} is missing: cloud saves will be unavailable")
+            return
+    for name in SYNC_FILES:
+        shutil.copy2(SITE_SRC / name, out / ASSETS / name)
+    try:
+        cfg = json.loads((SITE_SRC / "sync-config.json").read_text(encoding="utf-8"))
+        real = all(isinstance(cfg.get(k), str) and cfg[k].strip() and not cfg[k].strip().upper().startswith("YOUR_") for k in ("projectId", "apiKey"))
+    except (json.JSONDecodeError, AttributeError):
+        die("tools/site/sync-config.json is not valid JSON")
+    print("  sync  cloud saves ON  (arcade-assets/lorpcade-sync.js)" if real else
+          "  sync  cloud saves OFF: fill in tools/site/sync-config.json (see instruction.md)")
+
+
 def build(out: Path):
     found = discover()
     games = [load_game(slug, folder) for slug, folder in found.items()]
@@ -193,16 +216,13 @@ def build(out: Path):
     else:
         print(f"  music none (add tools/site/music/{MENU_MUSIC} for home screen music; see README)")
 
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    sha = os.environ.get("GITHUB_SHA", "")[:7] or "local"
+    publish_sync(out)
+
     page = (SITE_SRC / "index.template.html").read_text(encoding="utf-8")
     for token, value in {
         "{{CARDS}}": "".join(render_card(g) for g in listed) or EMPTY,
         "{{GAME_COUNT}}": f"{len(listed):02d}",
         "{{MUSIC}}": html.escape(music),
-        "{{BUILD_SHA}}": sha,
-        "{{BUILD_DATE}}": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "{{SOURCE}}": (f' <a href="https://github.com/{html.escape(repo)}">Source on GitHub</a>.' if repo else ""),
     }.items():
         page = page.replace(token, value)
     (out / "index.html").write_text(page, encoding="utf-8")

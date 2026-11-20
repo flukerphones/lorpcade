@@ -70,6 +70,10 @@ code { font: inherit; color: var(--yellow); }
 }
 .hud button b { margin-left: .8em; font-weight: 400; color: var(--ink); }
 .hud button[aria-pressed="true"] b { color: var(--yellow); }
+.hud .btns { display: flex; gap: clamp(14px, 3vw, 28px); }
+.hud button[hidden] { display: none; }
+.hud #sync[data-state="on"] b, .hud #sync[data-state="syncing"] b { color: var(--yellow); }
+.hud #sync[data-state="offline"] b, .hud #sync[data-state="error"] b { color: var(--orange); }
 
 /* ---------- hero: the sign ---------- */
 .hero {
@@ -202,9 +206,6 @@ main { max-width: 1240px; margin: 0 auto; padding: clamp(20px, 4vh, 40px) clamp(
 }
 .deck .hi-val { font-weight: 400; text-transform: none; color: var(--yellow); text-shadow: 0 0 8px rgba(255, 225, 77, .55); }
 
-/* ---------- footer ---------- */
-footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: center; color: var(--dim); font-size: 21px; }
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -216,7 +217,10 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
 <header class="hud">
   <div><span class="lbl">Games</span><span class="val">{{GAME_COUNT}}</span></div>
   <div class="free">Select a game</div>
-  <button id="snd" type="button" aria-pressed="false" data-music="{{MUSIC}}"><span class="lbl">Sound</span><b>Off</b></button>
+  <div class="btns">
+    <button id="sync" type="button" hidden aria-haspopup="dialog"><span class="lbl">Sync</span><b>Off</b></button>
+    <button id="snd" type="button" aria-pressed="false" data-music="{{MUSIC}}"><span class="lbl">Sound</span><b>Off</b></button>
+  </div>
 </header>
 
 <div class="hero">
@@ -229,10 +233,8 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
   </ul>
 </main>
 
-<footer>
-  <p>Built from commit {{BUILD_SHA}} on {{BUILD_DATE}}.{{SOURCE}}</p>
-</footer>
 
+<script src="arcade-assets/lorpcade-sync.js"></script>
 <script>
 (() => {
   const cards = [...document.querySelectorAll(".cab")];
@@ -336,6 +338,26 @@ footer { padding: 0 16px calc(36px + env(safe-area-inset-bottom)); text-align: c
     val.textContent = v == null ? (digits > 0 ? "0".repeat(digits) : "0") : showScore(v, digits);
   });
   paintScores();
+
+  // Cloud saves (arcade-assets/lorpcade-sync.js). The button only appears once the site has a Firebase config.
+  // Sync runs when this page opens and whenever it comes back into view: it pulls what other devices saved, pushes
+  // anything a game page did not get to send before it was closed, and repaints the HI lines.
+  const syncBtn = document.getElementById("sync"), LS = window.LorpSync;
+  if (LS) {
+    const paintSync = () => {
+      const l = LS.label();
+      syncBtn.hidden = !l;
+      syncBtn.dataset.state = l.toLowerCase();
+      syncBtn.querySelector("b").textContent = l === "SYNCING" ? "..." : l === "ON" ? "On" : l === "OFF" ? "Off" : l.charAt(0) + l.slice(1).toLowerCase();
+    };
+    LS.on(paintSync);
+    syncBtn.addEventListener("click", () => LS.openDialog({ slugs: cards.map(c => c.dataset.slug) }));
+    LS.ready.then(() => {
+      paintSync();
+      if (LS.enabled && LS.getCode()) LS.autoSync({ slugs: cards.map(c => c.dataset.slug), onSynced: paintScores });
+    });
+    addEventListener("pageshow", paintSync);
+  }
   addEventListener("storage", paintScores);              // a game saved a score in another tab
   addEventListener("pageshow", paintScores);             // coming back from a game with the Back button
   addEventListener("focus", paintScores);
