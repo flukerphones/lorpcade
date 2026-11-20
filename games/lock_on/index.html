@@ -13,6 +13,9 @@
 <!-- where the title screen's QUIT goes: the LORPcade home page, one level up from this game's folder -->
 <meta name="lorpcade-home" content="../">
 <title>LOCK-ON</title>
+<!-- Cloud saves: one script shared by the whole LORPcade site (published at /arcade-assets/). Without it (a game
+     served on its own) everything below simply skips syncing. -->
+<script src="../arcade-assets/lorpcade-sync.js"></script>
 <style>
   html, body {
     margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none;
@@ -37,6 +40,14 @@
   }
   #saveTools button:hover { background: rgba(255, 255, 255, 0.18); }
   #saveNote { min-height: 1.2em; font-size: 13px; opacity: 0.85; }
+  #syncBtn[hidden] { display: none; }
+  #syncBtn.on { border-color: #ffe14d; }
+  #syncBtn.bad { border-color: #ff9a5a; }
+  /* "the cloud save changed on another device" */
+  #stale { position: fixed; top: 0; left: 0; right: 0; z-index: 30; display: flex; gap: 10px; align-items: center; justify-content: center;
+    flex-wrap: wrap; padding: 8px 12px; background: #ffe14d; color: #12002a; font: 600 14px/1.3 system-ui, sans-serif; }
+  #stale[hidden] { display: none; }
+  #stale button { font: inherit; padding: 4px 10px; border: 2px solid #12002a; background: transparent; color: inherit; cursor: pointer; }
   #overlay.gone { display: none; }
   #overlay.error { color: #ffb4a8; }
   /* phones in landscape are short: tighten the start screen */
@@ -59,13 +70,25 @@
   <div id="saveTools">
     <button id="saveExport" type="button">EXPORT SAVE</button>
     <button id="saveImport" type="button">IMPORT SAVE</button>
+    <button id="syncBtn" type="button" hidden>CLOUD SYNC</button>
   </div>
   <small id="saveNote"></small>
   <input id="saveFile" type="file" accept=".txt,text/plain" hidden>
 </div>
+<div id="stale" hidden role="status">A newer save was found on another device.
+  <button id="staleReload" type="button">RELOAD</button> <button id="staleClose" type="button" aria-label="Dismiss">&times;</button></div>
 <div id="rotate"><span class="icon">&#128241;</span><div>ROTATE YOUR PHONE TO LANDSCAPE</div></div>
 <script type="module">
   import init from "./lock_on.js";
+
+  // this game's folder name: the key suffix the home page and the cloud save use for it
+  const folderName = (() => {
+    const meta = document.querySelector('meta[name="lorpcade-slug"]');
+    if (meta && meta.content) return meta.content;
+    const parts = location.pathname.split("/").filter(Boolean);
+    if (parts.length && /\.[a-z0-9]+$/i.test(parts[parts.length - 1])) parts.pop(); // .../index.html
+    return parts.length ? decodeURIComponent(parts[parts.length - 1]) : "lock_on";
+  })();
 
   const canvas = document.getElementById("game");
   const overlay = document.getElementById("overlay");
@@ -333,6 +356,48 @@
   });
 
   // ---------------------------------------------------------------------------------------------
+  // Cloud saves (shared script: ../arcade-assets/lorpcade-sync.js, set up per instruction.md). With a sync code
+  // this device's save is brought up to date BEFORE the game starts (the game reads localStorage once, when it
+  // boots), and every later save is pushed shortly after the game writes it. The game itself knows nothing about it.
+  // If the cloud copy changes on another device while the game is open, a bar offers a reload.
+  //   esSyncInfo: what the title screen's SYNC button says ("" = sync is not set up, so no button)
+  //   esSyncOpen: that button
+  // ---------------------------------------------------------------------------------------------
+  const SYNC = window.LorpSync || null;
+  const syncBtn = document.getElementById("syncBtn");
+  const stale = document.getElementById("stale");
+  const openSync = () => { if (SYNC) SYNC.openDialog({ slugs: [folderName], onApplied: () => location.reload() }); };
+  window.esSyncInfo = () => { try { return SYNC && SYNC.enabled ? SYNC.label() : ""; } catch (_) { return ""; } };
+  window.esSyncOpen = openSync;
+  document.getElementById("staleReload").addEventListener("click", () => location.reload());
+  document.getElementById("staleClose").addEventListener("click", () => { stale.hidden = true; });
+  function paintSyncBtn() {
+    if (!SYNC) return;
+    const l = SYNC.label();
+    syncBtn.hidden = !l;
+    syncBtn.textContent = "CLOUD SYNC: " + l;
+    syncBtn.className = l === "ON" || l === "SYNCING" ? "on" : l === "OFFLINE" || l === "ERROR" ? "bad" : "";
+  }
+  syncBtn.addEventListener("click", (e) => { e.stopPropagation(); openSync(); });
+  async function cloudStart() {
+    if (!SYNC) return;
+    try {
+      // a cloud copy that is not a sealed Lock-On save never replaces a good local one
+      SYNC.validators[folderName] = (name, text) => name === "save" ? /^LOSAVE1:[A-Za-z0-9_-]+$/.test(text) : name !== "hiscore" || /^[0-9]{1,15}$/.test(text);
+      SYNC.on(paintSyncBtn);
+      await SYNC.ready;
+      paintSyncBtn();
+      if (!SYNC.enabled) return;
+      if (SYNC.getCode()) {
+        msg.textContent = "Syncing save...";
+        await SYNC.syncGame(folderName, { timeout: 4000 }); // never rejects; gives up after 4 s so a bad connection can't block play
+        msg.textContent = "Loading...";
+      }
+      SYNC.watch(folderName, { onRemote: () => { stale.hidden = false; } });
+    } catch (_) {}
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Saves live in this browser's localStorage. Chrome sync does NOT carry site data across devices, so the
   // start screen has EXPORT / IMPORT: a plain-text file (same sealed format as the Windows savegame.txt) that can
   // be moved by Drive, e-mail, a messaging app... The page also asks the browser to keep the data safe
@@ -388,13 +453,6 @@
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (_) {}
     location.assign(new URL((homeMeta && homeMeta.content) || "../", location.href).href);
   };
-  const folderName = (() => {
-    const meta = document.querySelector('meta[name="lorpcade-slug"]');
-    if (meta && meta.content) return meta.content;
-    const parts = location.pathname.split("/").filter(Boolean);
-    if (parts.length && /\.[a-z0-9]+$/i.test(parts[parts.length - 1])) parts.pop(); // .../index.html
-    return parts.length ? decodeURIComponent(parts[parts.length - 1]) : "lock_on";
-  })();
   window.esHiscore = (score) => {
     try {
       const key = "lorpcade:hiscore:" + folderName, v = String(Math.max(0, Math.floor(score)));
@@ -439,17 +497,17 @@
     window.addEventListener("error", () => fail("Something went wrong."));
     window.addEventListener("unhandledrejection", () => fail("Something went wrong."));
 
-    init().then(() => {
+    cloudStart().then(() => init()).then(() => {
       if (MOBILE) {
         msg.textContent = "TAP TO START";
-        hint.textContent = "Tilt the phone to roll and pitch (hold it how you like during the 3-second countdown: that is level), and drag a finger on the open screen to steer more, like a mouse. Left thumb: cannon, missile / bomb, weapon switch, flares. Right thumb: throttle slider, boost, brake. Each sortie starts with a 3-second countdown. Progress is saved in this browser.";
+        hint.textContent = "Tilt the phone to roll and pitch (hold it how you like during the 3-second countdown: that is level), and drag a finger on the open screen to steer more, like a mouse. Left thumb: cannon, missile / bomb, weapon switch, flares. Right thumb: throttle slider, boost, brake. Each sortie starts with a 3-second countdown. Progress is saved in this browser (CLOUD SYNC shares it between devices).";
         // iPhone Safari cannot go fullscreen from a web page; a home-screen app can
         if (isIOS && !fsRequest && !standalone) {
           hint.textContent += " For full screen on iPhone: Share, then Add to Home Screen, and open it from there.";
         }
       } else {
         msg.textContent = "CLICK TO START";
-        hint.textContent = "Mouse + keyboard. Progress is saved in this browser (it does not follow you between devices; use EXPORT / IMPORT SAVE for that).";
+        hint.textContent = "Mouse + keyboard. Progress is saved in this browser. CLOUD SYNC (or EXPORT / IMPORT SAVE) moves it between devices.";
       }
       overlay.classList.add("ready");
       // Keyboard events go to the focused canvas, and audio / pointer lock need a user gesture anyway.
